@@ -1,0 +1,66 @@
+name: Refresh catalogs
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_details:
+        description: Metadata refresh budget
+        type: number
+        default: 6000
+  schedule:
+    - cron: '17 */4 * * *'
+  push:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/prepare.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-publisher
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: machinery
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.CATALOG_REPOSITORY }}
+          ssh-key: ${{ secrets.CATALOG_PUBLISH_KEY }}
+          path: catalogs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/cache@v4
+        with:
+          path: catalogs/.cache/metadata.json
+          key: prepared-metadata-v1-${{ github.run_id }}
+          restore-keys: prepared-metadata-v1-
+      - name: Test publisher
+        run: node --test machinery/scripts/prepare.test.mjs
+      - name: Prepare catalogs
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+          DETAIL_BUDGET: ${{ inputs.max_details || 6000 }}
+        run: node machinery/scripts/prepare.mjs --root catalogs --activate --max-details "$DETAIL_BUDGET"
+      - name: Validate published coverage
+        run: node machinery/scripts/verify.mjs catalogs
+      - name: Publish complete feeds
+        working-directory: catalogs
+        env:
+          COMMIT_EMAIL: ${{ vars.CATALOG_COMMIT_EMAIL }}
+        run: |
+          git config user.name 'sourceindex'
+          git config user.email "$COMMIT_EMAIL"
+          git add prepared/lists home.json home-kids.json movie.json tv.json genres
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update catalogs'
+            git push
+          fi
