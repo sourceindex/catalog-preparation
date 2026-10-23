@@ -60,6 +60,7 @@ jobs:
           git config user.name 'sourceindex'
           git config user.email "$COMMIT_EMAIL"
           git add prepared/lists home.json home-kids.json movie.json tv.json genres
+          if [ -d kids ]; then git add kids; fi
           if ! git diff --cached --quiet; then
             git commit -m 'Update catalogs'
             git push

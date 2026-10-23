@@ -15,6 +15,9 @@ export function feedName(row) {
 
 export async function catalogs(root) {
   const files = ['home.json', 'movie.json', 'tv.json', 'home-kids.json'];
+  for (const file of ['kids/home-kids.json', 'kids/movie-kids.json', 'kids/tv-kids.json']) {
+    if (await readJson(join(root, file), null) !== null) files.push(file);
+  }
   for (const name of await readdir(join(root, 'genres'))) {
     if (name.endsWith('.json')) files.push(`genres/${name}`);
   }
@@ -134,10 +137,11 @@ export class Http {
       uri.pathname = uri.pathname.replace(/\/$/, '') + '/json';
       const { data } = await this.get(uri);
       if (!Array.isArray(data)) throw new Error('Invalid MDBList feed');
-      const type = row.catalogType === 'traktTv' ? 'show' : 'movie';
-      return data.filter(entry => entry.mediatype === type && entry.adult !== true && entry.adult !== 1)
+      const type = row.catalogType === 'traktMixed' ? null : row.catalogType === 'traktTv' ? 'show' : 'movie';
+      return data.filter(entry => (entry.mediatype === 'movie' || entry.mediatype === 'show') &&
+          (type === null || entry.mediatype === type) && entry.adult !== true && entry.adult !== 1)
         .filter(entry => Number.isInteger(Number(entry.id)) && Number(entry.id) > 0)
-        .map(entry => ({ type, tmdbId: Number(entry.id), imdbId: entry.imdb_id ?? null,
+        .map(entry => ({ type: entry.mediatype, tmdbId: Number(entry.id), imdbId: entry.imdb_id ?? null,
           listTitle: entry.title ?? '', listYear: Number(entry.release_year) || null,
           listRating: null, listCertification: null, listedAt: null }));
     }
@@ -177,7 +181,7 @@ export class Http {
   }
 }
 
-export async function prepare({ root, cachePath, base, activate = false, maxDetails = Infinity,
+export async function prepare({ root, cachePath, base, activate = false, maxDetails = Infinity, onlyFiles,
   http = new Http({ tmdb: process.env.TMDB_API_KEY, trakt: process.env.TRAKT_CLIENT_ID }) }) {
   const configs = await catalogs(root);
   const cache = await readJson(cachePath, {});
@@ -197,8 +201,9 @@ export async function prepare({ root, cachePath, base, activate = false, maxDeta
   }
   const sources = new Map();
   for (const config of configs) {
+    if (onlyFiles && !onlyFiles.includes(config.file)) continue;
     for (const row of config.rows) {
-      if (['traktMovie', 'traktTv'].includes(row.catalogType) && row.url) sources.set(feedName(row), row);
+      if (['traktMovie', 'traktTv', 'traktMixed'].includes(row.catalogType) && row.url) sources.set(feedName(row), row);
     }
   }
   const status = { generatedAt: new Date().toISOString(), sources: sources.size,
@@ -279,6 +284,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if (!process.env.TMDB_API_KEY || !process.env.TRAKT_CLIENT_ID) throw new Error('TMDB_API_KEY and TRAKT_CLIENT_ID are required');
   const result = await prepare({ root, cachePath: resolve(option('--cache', join(root, '.cache', 'metadata.json'))),
     base: option('--base', 'https://raw.githubusercontent.com/sourceindex/view-index/main'),
-    activate: args.includes('--activate'), maxDetails: Number(option('--max-details', 'Infinity')) });
+    activate: args.includes('--activate'), maxDetails: Number(option('--max-details', 'Infinity')),
+    onlyFiles: option('--only', null)?.split(',') });
   console.log(JSON.stringify(result));
 }

@@ -76,6 +76,46 @@ test('MDBList uses its public feed and preserves media and adult filtering', asy
   assert.deepEqual(items.map(item => item.tmdbId), [123]);
 });
 
+test('mixed MDBList feeds preserve movie/show identity and reject adult entries', async () => {
+  const http = new Http({}, async () => new Response(JSON.stringify([
+    { id: 123, mediatype: 'movie' }, { id: 123, mediatype: 'show' },
+    { id: 456, mediatype: 'movie', adult: 1 }, { id: 789, mediatype: 'episode' },
+  ])));
+  const items = await http.list({ catalogType: 'traktMixed', url: 'https://mdblist.com/lists/test/family' });
+  assert.deepEqual(items.map(item => `${item.type}:${item.tmdbId}`), ['movie:123', 'show:123']);
+});
+
+test('kids preparation preserves approved content and leaves legacy catalogs intact', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'upnext-kids-'));
+  assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+  assert.ok(root.split(/[\\/]/).pop().startsWith('upnext-kids-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'genres'));
+  await mkdir(join(root, 'kids'));
+  for (const file of ['home.json', 'movie.json', 'tv.json', 'home-kids.json']) {
+    await writeFile(join(root, file), JSON.stringify([row]));
+  }
+  const kids = { ...row, id: 'family', title: 'Approved title', catalogType: 'traktMixed',
+    url: 'https://mdblist.com/lists/test/family' };
+  for (const file of ['home-kids.json', 'movie-kids.json', 'tv-kids.json']) {
+    await writeFile(join(root, 'kids', file), JSON.stringify([kids]));
+  }
+  const calls = [];
+  const status = await prepare({ root, cachePath: join(root, '.cache', 'metadata.json'),
+    base: 'https://example.com', activate: true, onlyFiles: ['kids/home-kids.json'],
+    http: { list: async source => { calls.push(source.url); return [record, { ...record, type: 'show' }]; },
+      details: async () => details } });
+  assert.equal(status.ready, 1);
+  assert.deepEqual(calls, [kids.url]);
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'home-kids.json'), 'utf8')), [row]);
+  const actual = JSON.parse(await readFile(join(root, 'kids', 'home-kids.json'), 'utf8'));
+  assert.ok(actual[0].preparedUrl.endsWith(feedName(kids)));
+  delete actual[0].preparedUrl;
+  assert.deepEqual(actual, [kids]);
+  const feed = JSON.parse(await readFile(join(root, 'prepared', 'lists', feedName(kids)), 'utf8'));
+  assert.deepEqual(feed.items.map(item => item.type), ['movie', 'show']);
+});
+
 test('publishing adds only preparedUrl; incomplete refresh retains last complete feed', async t => {
   const root = await mkdtemp(join(tmpdir(), 'upnext-prepared-'));
   assert.equal(dirname(resolve(root)), resolve(tmpdir()));

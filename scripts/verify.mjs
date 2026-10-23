@@ -8,7 +8,7 @@ let rows = 0;
 const seen = new Set();
 for (const { rows: entries } of await catalogs(root)) {
   for (const row of entries) {
-    if (!['traktMovie', 'traktTv'].includes(row.catalogType) || !row.url) continue;
+    if (!['traktMovie', 'traktTv', 'traktMixed'].includes(row.catalogType) || !row.url) continue;
     rows++;
     const name = feedName(row);
     assert.equal(row.preparedUrl,
